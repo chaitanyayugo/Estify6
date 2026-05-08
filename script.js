@@ -361,7 +361,99 @@ function generateUnifiedPlan(results, tolerance = 10) {
   results
     .filter(r => r.config === baseConfig)
     .forEach(r => {
-      colourExtras[r.code] = Number(r.price) - basePrice - (configExtras[r.config] || 0);
+      function generateUnifiedPlan(results, tolerance = 10) {
+
+  if (!results?.length) return null;
+
+  const base = results.reduce((a, b) =>
+    Number(b.price) < Number(a.price) ? b : a
+  );
+
+  const basePrice = Number(base.price);
+
+  const colourExtras = {
+    [base.code]: 0
+  };
+
+  const configExtras = {
+    [base.config]: 0
+  };
+
+  // CONFIG EXTRAS
+  results
+    .filter(r => r.code === base.code)
+    .forEach(r => {
+      configExtras[r.config] =
+        Number(r.price) - basePrice;
+    });
+
+  // COLOUR EXTRAS
+  results
+    .filter(r => r.config === base.config)
+    .forEach(r => {
+      colourExtras[r.code] =
+        Number(r.price) - basePrice;
+    });
+
+  const validation = results.map(r => {
+
+    const predicted =
+      basePrice +
+      (colourExtras[r.code] || 0) +
+      (configExtras[r.config] || 0);
+
+    const diff = predicted - Number(r.price);
+
+    return {
+      ...r,
+      predicted,
+      diff,
+      fits: Math.abs(diff) <= tolerance,
+      status:
+        Math.abs(diff) <= tolerance
+          ? "EXACT"
+          : "MISMATCH"
+    };
+  });
+
+  const mismatches = validation.filter(v => !v.fits);
+
+  const maxDiff = mismatches.length
+    ? Math.max(...mismatches.map(v => Math.abs(v.diff)))
+    : 0;
+
+  const forcedExact = maxDiff > tolerance;
+
+  const exactOverrides = forcedExact
+    ? results.map(r => ({
+        model: r.model,
+        code: r.code,
+        config: r.config,
+        actual: Number(r.price)
+      }))
+    : [];
+
+  return {
+    model: results[0].model,
+    grade: results[0].grade,
+    base,
+    basePrice,
+    anchorColour: base.code,
+    anchorConfig: base.config,
+    colourExtras,
+    configExtras,
+    validation,
+    exactOverrides,
+    mismatchCount: mismatches.length,
+    maxDiff,
+    tolerance,
+    forcedExact,
+    pricingMode:
+      forcedExact
+        ? "FORCED EXACT"
+        : "SHARED ADDITIVE"
+  };
+}
     });
 
   let validation = results.map(r => {
@@ -378,8 +470,11 @@ function generateUnifiedPlan(results, tolerance = 10) {
   });
 
   const mismatches = validation.filter(v => !v.fits);
-  const forcedExact = mismatches.length > 0;
+  const maxDiff = mismatches.length
+  ? Math.max(...mismatches.map(v => Math.abs(v.diff)))
+  : 0;
 
+const forcedExact = maxDiff > tolerance;
   const exactOverrides = forcedExact
     ? results.map(r => ({
         model: r.model,
@@ -392,13 +487,8 @@ function generateUnifiedPlan(results, tolerance = 10) {
         status: "EXACT"
       }))
     : [];
-
-  if (forcedExact) {
-    validation = exactOverrides.map(v => ({
-      ...v,
-      price: v.actual
-    }));
-  }
+    // preserve actual validation
+// exactOverrides are export-only
 
   return {
     model: results[0].model,
@@ -423,14 +513,33 @@ function generatePlans(results) {
   const grouped = {};
 
   for (const r of results) {
-    if (!grouped[r.model]) grouped[r.model] = [];
-    grouped[r.model].push(r);
+
+    // 🔥 KEY FIX
+    // model + grade family
+    const key = `${normalize(r.model)}__${normalize(r.grade)}`;
+
+    if (!grouped[key]) {
+      grouped[key] = [];
+    }
+
+    grouped[key].push(r);
   }
 
   const plans = {};
 
-  for (const [model, rows] of Object.entries(grouped)) {
-    plans[model] = generateUnifiedPlan(rows);
+  for (const [key, rows] of Object.entries(grouped)) {
+
+    const plan = generateUnifiedPlan(rows);
+
+    if (plan) {
+      const [model, grade] = key.split("__");
+
+      plan.model = model;
+      plan.grade = grade;
+      plan.groupKey = key;
+    }
+
+    plans[key] = plan;
   }
 
   return plans;
@@ -492,7 +601,8 @@ function displayResults(data, plans) {
       return;
     }
 
-    const plan = plans[d.model];
+    const key = `${normalize(d.model)}__${normalize(d.grade)}`;
+const plan = plans[key];
     const extra = Number(d.price) - Number(plan.basePrice);
 
     tr.innerHTML = `
