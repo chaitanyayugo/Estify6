@@ -424,10 +424,10 @@ function getFinalPrice(model, config, grade) {
 // =====================================================
 // SMART EXACT ENGINE
 // =====================================================
-function generateUnifiedPlan(
-  results,
-  tolerance = 10
-) {
+// =====================================================
+// SMART EXACT ENGINE
+// =====================================================
+function generateUnifiedPlan(results, tolerance = 10) {
 
   if (!results?.length) {
     return null;
@@ -450,7 +450,9 @@ function generateUnifiedPlan(
     [base.config]: 0
   };
 
+  // =================================================
   // CONFIG EXTRAS
+  // =================================================
   results
     .filter(r => r.code === base.code)
     .forEach(r => {
@@ -459,6 +461,101 @@ function generateUnifiedPlan(
         Number(r.price) - basePrice;
 
     });
+
+  // =================================================
+  // COLOUR EXTRAS
+  // =================================================
+  results
+    .filter(r => r.config === base.config)
+    .forEach(r => {
+
+      colourExtras[r.code] =
+        Number(r.price) - basePrice;
+
+    });
+
+  // =================================================
+  // VALIDATION
+  // =================================================
+  const validation = results.map(r => {
+
+    const predicted =
+      basePrice +
+      (colourExtras[r.code] || 0) +
+      (configExtras[r.config] || 0);
+
+    const diff =
+      predicted - Number(r.price);
+
+    return {
+      ...r,
+      predicted,
+      diff,
+      fits:
+        Math.abs(diff) <= tolerance,
+
+      status:
+        Math.abs(diff) <= tolerance
+          ? "EXACT"
+          : "MISMATCH"
+    };
+  });
+
+  const mismatches =
+    validation.filter(v => !v.fits);
+
+  const maxDiff = mismatches.length
+    ? Math.max(
+        ...mismatches.map(v =>
+          Math.abs(v.diff)
+        )
+      )
+    : 0;
+
+  const forcedExact =
+    maxDiff > tolerance;
+
+  const exactOverrides = forcedExact
+    ? results.map(r => ({
+        model: r.model,
+        code: r.code,
+        config: r.config,
+        actual: Number(r.price)
+      }))
+    : [];
+
+  return {
+
+    model: results[0].model,
+    grade: results[0].grade,
+
+    base,
+    basePrice,
+
+    anchorColour: base.code,
+    anchorConfig: base.config,
+
+    colourExtras,
+    configExtras,
+
+    validation,
+
+    exactOverrides,
+
+    mismatchCount: mismatches.length,
+
+    maxDiff,
+
+    tolerance,
+
+    forcedExact,
+
+    pricingMode:
+      forcedExact
+        ? "FORCED EXACT"
+        : "SHARED ADDITIVE"
+  };
+}
 
   // COLOUR EXTRAS
   results
